@@ -15,8 +15,7 @@ import qualified Data.Vector.Unboxed as V
 import qualified Data.Vector.Unboxed.Mutable as MV
 import Lens.Micro.Platform
 import System.Random.MWC
-
-import Debug.Trace
+import System.Random.MWC.Distributions
 
 newtype Suit = Suit { _suit :: Int }
   deriving (Eq, Ord)
@@ -111,21 +110,14 @@ newDeck = V.fromList $ do
 shuffle :: (MonadState TrialState m) => m ()
 shuffle =
   do seed <- use (trial_poker . poker_seed)
-     let (seed',swaps) = runST (randSwaps seed)
-     trial_deck %= doSwaps (zip [0 .. 51] swaps)
+     d <- use trial_deck
+     let (seed', d') = runST $ do
+           gen <- restore seed
+           d' <- uniformShuffle d gen
+           seed' <- save gen
+           pure (seed', d')
+     trial_deck .= d'
      (trial_poker . poker_seed) .= seed'
-
-  where randSwaps seed =
-          do gen <- restore seed
-             ss <- mapM (\i -> uniformR (i,51) gen) [0 .. 51]
-             seed <- save gen
-             pure (seed,ss)
-
-        doSwaps ss d =
-           V.create $
-           do md <- V.thaw d
-              mapM_ (uncurry (MV.swap md)) ss
-              pure md
 
 draw :: (MonadState TrialState m) => Card -> Card -> m ()
 draw c1 c2 =
@@ -158,14 +150,8 @@ rankHand cs =
       sFlush = V.maxIndex suits
       csFlush = V.filter ((== sFlush) . suit) cs
 
-      bv =
-        BitVector (V.foldl' setBit
-                            0
-                            (rank $ V.unzip cs))
-      bvFlush =
-        BitVector (V.foldl' setBit
-                            0
-                            (rank $ V.unzip csFlush))
+      bv = V.foldl setBit zeroBits (rank $ V.unzip cs)
+      bvFlush = V.foldl setBit zeroBits (rank $ V.unzip csFlush)
 
       bvStraight0 =
         if isFlush
@@ -176,7 +162,7 @@ rankHand cs =
       bvStraightTest = bvStraight
                        .&. (bvStraight `shift` 1) .&. (bvStraight `shift` 2)
                        .&. (bvStraight `shift` 3) .&. (bvStraight `shift` 4)
-      isStraight = bvStraightTest /= BitVector 0
+      isStraight = bvStraightTest /= zeroBits
       straightNum = -(countLeadingZeros bvStraightTest)
 
       pRes = V.ifoldl' (\p r c -> accResult p (Rank r) c) PNull ranks
