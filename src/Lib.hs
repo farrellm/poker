@@ -11,10 +11,12 @@ import Control.Monad.State.Strict
        (MonadState, get, put, evalStateT, runState)
 import Data.Bits
 import qualified Data.Text.Format as F
-import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as MV
+import qualified Data.Vector.Unboxed as V
+import qualified Data.Vector.Unboxed.Mutable as MV
 import Lens.Micro.Platform
 import System.Random.MWC
+
+import Debug.Trace
 
 newtype Suit = Suit { _suit :: Int }
   deriving (Eq, Ord)
@@ -38,13 +40,19 @@ instance Show Rank where
 
 type Card = (Rank, Suit)
 
+fromCard :: (Rank, Suit) -> (Int, Int)
+fromCard (r, s) = (_rank r, _suit s)
+
+toCard :: (Int, Int) -> (Rank, Suit)
+toCard (r, s) = (Rank r, Suit s)
+
 rank :: (a, b) -> a
 rank = fst
 
 suit :: (a, b) -> b
 suit = snd
 
-newtype BitVector = BitVector { _bits :: Word32 }
+newtype BitVector = BitVector { _bits :: Word }
   deriving (Show, Eq, Ord, Bits, FiniteBits)
 
 data Partial
@@ -79,7 +87,7 @@ suits = map Suit [0..3]
 ranks :: [Rank]
 ranks = [two .. ace]
 
-type Deck = V.Vector Card
+type Deck = V.Vector (Int, Int)
 
 data PokerState =
   PokerState {_poker_seed :: Seed}
@@ -98,7 +106,7 @@ newDeck :: Deck
 newDeck = V.fromList $ do
   r <- ranks
   s <- suits
-  pure (r, s)
+  pure (_rank r, _suit s)
 
 shuffle :: (MonadState TrialState m) => m ()
 shuffle =
@@ -120,7 +128,10 @@ shuffle =
               pure md
 
 draw :: (MonadState TrialState m) => Card -> Card -> m ()
-draw c1 c2 = trial_deck %= V.filter (\c -> c /= c1 && c /= c2)
+draw c1 c2 =
+  let c1' = fromCard c1
+      c2' = fromCard c2
+  in trial_deck %= V.filter (\c -> c /= c1' && c /= c2')
 
 deal :: (MonadState TrialState m) => Int -> m Deck
 deal n = do
@@ -132,27 +143,27 @@ rankHand :: Deck -> Result
 rankHand cs =
   let ranks =
         V.create $
-        do r <- MV.replicate 14 0
-           V.mapM_ (MV.modify r (+ 1) . _rank)
+        do r <- MV.replicate 14 (0 :: Int)
+           V.mapM_ (MV.modify r (+ 1))
                    (rank $ V.unzip cs)
            pure r
       suits =
         V.create $
-        do s <- MV.replicate 4 0
-           V.mapM_ (MV.modify s (+ 1) . _suit)
+        do s <- MV.replicate 4 (0 :: Int)
+           V.mapM_ (MV.modify s (+ 1))
                    (suit $ V.unzip cs)
            pure s
 
       isFlush = V.maximum suits >= 5
-      sFlush = Suit (V.maxIndex suits)
+      sFlush = V.maxIndex suits
       csFlush = V.filter ((== sFlush) . suit) cs
 
       bv =
-        BitVector (V.foldl' (\v r -> setBit v (_rank r))
+        BitVector (V.foldl' setBit
                             0
                             (rank $ V.unzip cs))
       bvFlush =
-        BitVector (V.foldl' (\v r -> setBit v (_rank r))
+        BitVector (V.foldl' setBit
                             0
                             (rank $ V.unzip csFlush))
 
@@ -264,7 +275,7 @@ analyze c1 c2 nOpps nTries =
           do shuffle
 
              draw c1 c2
-             let hole = V.fromList [c1,c2]
+             let hole = V.fromList [fromCard c1, fromCard c2]
              oppHoles <- replicateM nOpps (deal 2)
              common <- deal 5
 
