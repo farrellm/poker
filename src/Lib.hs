@@ -277,13 +277,12 @@ analyze c1 c2 nOpps nTries =
 
 nTries = 1000
 
-
 someFunc :: IO ()
 someFunc =
   do seed <- createSystemRandom >>= asGenIO save
      putStrLn ("*** " ++ tshow nTries ++ " samples ***")
      putStrLn ""
-     evalStateT (mapM_ doSet [0..8]) (PokerState seed)
+     evalStateT (mapM_ doSet [1..8]) (PokerState seed)
      putStrLn ""
 
   where doSet i =
@@ -299,7 +298,7 @@ someFunc =
              putStrLn ""
 
         doLine i (l :: Text) c1 c2 =
-          do r <- analyze c1 c2 (i + 1) nTries
+          do r <- analyze c1 c2 i nTries
              F.print "({} {}) {} \t" (l
-                                     ,i + 1
+                                     ,i
                                      ,F.left 5 ' ' $ F.fixed 2 (100 * r))
