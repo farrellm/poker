@@ -130,12 +130,19 @@ deal n = do
 
 rankHand :: Deck -> Result
 rankHand cs =
-  let suits =
+  let ranks =
+        V.create $
+        do r <- MV.replicate 14 0
+           V.mapM_ (MV.modify r (+ 1) . _rank)
+                   (rank $ V.unzip cs)
+           pure r
+      suits =
         V.create $
         do s <- MV.replicate 4 0
            V.mapM_ (MV.modify s (+ 1) . _suit)
                    (suit $ V.unzip cs)
            pure s
+
       isFlush = V.maximum suits >= 5
       sFlush = Suit (V.maxIndex suits)
       csFlush = V.filter ((== sFlush) . suit) cs
@@ -144,7 +151,6 @@ rankHand cs =
         BitVector (V.foldl' (\v r -> setBit v (_rank r))
                             0
                             (rank $ V.unzip cs))
-
       bvFlush =
         BitVector (V.foldl' (\v r -> setBit v (_rank r))
                             0
@@ -162,14 +168,7 @@ rankHand cs =
       isStraight = bvStraightTest /= BitVector 0
       straightNum = -(countLeadingZeros bvStraightTest)
 
-      ranks =
-        V.create $
-        do r <- MV.replicate 14 0
-           V.mapM_ (MV.modify r (+ 1) . _rank)
-                   (rank $ V.unzip cs)
-           pure r
-
-      pRes = V.ifoldl' (\p r c -> accRank p (Rank r) c) PNull ranks
+      pRes = V.ifoldl' (\p r c -> accResult p (Rank r) c) PNull ranks
       res = normalize pRes bv
   in case (isFlush, isStraight, res) of
     (True, True, _) -> StraightFlush straightNum
@@ -182,8 +181,8 @@ rankHand cs =
   where clearLast1 bv = bv `clearBit` countTrailingZeros bv
         clearLast2 = clearLast1 . clearLast1
 
-        accRank :: Partial -> Rank -> Int -> Partial
-        accRank res r c =
+        accResult :: Partial -> Rank -> Int -> Partial
+        accResult res r c =
           case (res, c) of
             (_, 0) -> res
 
@@ -199,26 +198,26 @@ rankHand cs =
             (PHighCard, 4) -> PQuads r
 
             (PPair p, 2) | p > r -> PTwoPair p r
-                           | otherwise -> PTwoPair r p
+                         | otherwise -> PTwoPair r p
             (PPair t, 3) -> PFullHouse r t
             (PPair _, 4) -> PQuads r
-
-            (PTrips t, 2) -> PFullHouse t r
-            (PTrips t, 3) | t > r -> PFullHouse t r
-                          | otherwise -> PFullHouse r t
-            (PTrips _, 4) -> PQuads r
-
-            (PQuads _, _) -> res
 
             (PTwoPair p1 p2, 2) | r > p1 -> PTwoPair r p1
                                 | r > p2 -> PTwoPair p1 r
                                 | otherwise -> res
             (PTwoPair p1 _, 3) -> PFullHouse r p1
 
+            (PTrips t, 2) -> PFullHouse t r
+            (PTrips t, 3) | t > r -> PFullHouse t r
+                          | otherwise -> PFullHouse r t
+            (PTrips _, 4) -> PQuads r
+
             (PFullHouse t p, 2) | p > r -> res
                                 | otherwise -> PFullHouse t r
 
-            _ -> error ("accRank: " ++ show (res, r, c))
+            (PQuads _, _) -> res
+
+            _ -> error ("accResult: " ++ show (res, r, c))
 
         normalize :: Partial -> BitVector -> Result
         normalize res bv =
@@ -263,21 +262,24 @@ analyze c1 c2 nOpps nTries =
              pure res
         inner =
           do shuffle
+
              draw c1 c2
              let hole = V.fromList [c1,c2]
-             oppHoles <-
-               replicateM nOpps
-                          (deal 2)
+             oppHoles <- replicateM nOpps (deal 2)
              common <- deal 5
+
              let hands = map (V.++ common) (hole : oppHoles)
                  allRes@(res:_) = map rankHand hands
+
                  maxRes = maximum allRes
                  nWin = length (filter (== maxRes) allRes)
+
              pure (if res == maxRes
                       then recip (fromIntegral nWin)
                       else 0)
 
 nTries = 1000
+
 
 someFunc :: IO ()
 someFunc =
