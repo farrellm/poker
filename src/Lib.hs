@@ -133,50 +133,56 @@ deal n = do
 
 rankHand :: Deck -> Result
 rankHand cs =
-  let ranks =
+  let bv = V.foldl setBit zeroBits (rank $ V.unzip cs)
+
+      flush = isFlush cs
+      straight = isStraight $
+        case flush of
+           Just bvFlush -> bvFlush
+           Nothing -> bv
+
+      ranks =
         V.create $
         do r <- MV.replicate 14 (0 :: Int)
            V.mapM_ (MV.modify r (+ 1))
                    (rank $ V.unzip cs)
            pure r
-      suits =
-        V.create $
-        do s <- MV.replicate 4 (0 :: Int)
-           V.mapM_ (MV.modify s (+ 1))
-                   (suit $ V.unzip cs)
-           pure s
-
-      isFlush = V.maximum suits >= 5
-      sFlush = V.maxIndex suits
-      csFlush = V.filter ((== sFlush) . suit) cs
-
-      bv = V.foldl setBit zeroBits (rank $ V.unzip cs)
-      bvFlush = V.foldl setBit zeroBits (rank $ V.unzip csFlush)
-
-      bvStraight0 =
-        if isFlush
-           then bvFlush
-           else bv
-      bvStraight = bvStraight0 .|. (bvStraight0 `shift` (-13))  -- ace -> one
-
-      bvStraightTest = bvStraight
-                       .&. (bvStraight `shift` 1) .&. (bvStraight `shift` 2)
-                       .&. (bvStraight `shift` 3) .&. (bvStraight `shift` 4)
-      isStraight = bvStraightTest /= zeroBits
-      straightNum = -(countLeadingZeros bvStraightTest)
 
       pRes = V.ifoldl' (\p r c -> accResult p (Rank r) c) PNull ranks
       res = normalize pRes bv
-  in case (isFlush, isStraight, res) of
-    (True, True, _) -> StraightFlush straightNum
+  in case (flush, straight, res) of
+    (Just _, Just straightNum, _) -> StraightFlush straightNum
     (_, _, r@(Quads _ _)) -> r
     (_, _, r@(FullHouse _ _)) -> r
-    (True, _, _) -> Flush bv
-    (_, True, _) -> Straight straightNum
+    (Just bvFlush, _, _) -> Flush bv
+    (_, Just straightNum, _) -> Straight straightNum
     (_, _, r) -> r
 
   where clearLast1 bv = bv `clearBit` countTrailingZeros bv
         clearLast2 = clearLast1 . clearLast1
+
+        isFlush cs =
+          let suits =
+                V.create $
+                do s <- MV.replicate 4 (0 :: Int)
+                   V.mapM_ (MV.modify s (+ 1))
+                           (suit $ V.unzip cs)
+                   pure s
+              sFlush = V.maxIndex suits
+              csFlush = V.filter ((== sFlush) . suit) cs
+              bvFlush = V.foldl setBit zeroBits (rank $ V.unzip csFlush)
+          in if V.maximum suits >= 5
+               then Just bvFlush
+               else Nothing
+
+        isStraight bv =
+          let bv1 = bv .|. (bv `shift` (-13))  -- ace -> one
+              bvStraight = bv1
+                          .&. (bv1 `shift` 1) .&. (bv1 `shift` 2)
+                          .&. (bv1 `shift` 3) .&. (bv1 `shift` 4)
+          in if bvStraight /= zeroBits
+                then Just $ -(countLeadingZeros bvStraight)
+                else Nothing
 
         accResult :: Partial -> Rank -> Int -> Partial
         accResult res r c =
