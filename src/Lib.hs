@@ -151,15 +151,25 @@ rankHand cs =
       pRes = V.ifoldl' (\p r c -> accResult p (Rank r) c) PNull ranks
       res = normalize pRes bv
   in case (flush, straight, res) of
-    (Just _, Just straightNum, _) -> StraightFlush straightNum
+    (Just _, Just straightNum, _) ->
+      StraightFlush straightNum
     (_, _, r@(Quads _ _)) -> r
     (_, _, r@(FullHouse _ _)) -> r
-    (Just bvFlush, _, _) -> Flush bv
-    (_, Just straightNum, _) -> Straight straightNum
+    (Just bvFlush, _, _) ->
+      Flush $ clearLeastTo 5 bvFlush
+    (_, Just straightNum, _) ->
+      Straight straightNum
     (_, _, r) -> r
 
-  where clearLast1 bv = bv `clearBit` countTrailingZeros bv
-        clearLast2 = clearLast1 . clearLast1
+  where clearLeast bv = bv `clearBit` countTrailingZeros bv
+        clearLeastTo n bv =
+          case popCount bv - n of
+            0 -> bv
+            1 -> clearLeast bv
+            2 -> clearLeast $ clearLeast bv
+            m | m > 0 -> clearLeastTo (n - 1) (clearLeast bv)
+            m -> error ("cannot clear least to " ++
+                        show n ++ " from bitset with " ++ show m)
 
         isFlush cs =
           let suits =
@@ -227,30 +237,25 @@ rankHand cs =
           case res of
             PNull -> error "cannot normalize null hand"
 
-            PHighCard -> HighCard (clearLast2 bv)
+            PHighCard -> HighCard (clearLeastTo 5 bv)
 
             (PPair p) ->
               let bv' = bv `clearBit` _rank p
-              in Pair p (clearLast2 bv')
+              in Pair p (clearLeastTo 3 bv')
 
             (PTwoPair p1 p2) ->
               let bv' = bv `clearBit` _rank p1 `clearBit` _rank p2
-              in case popCount bv' of
-                   2 -> TwoPair p1 p2 (clearLast1 bv')
-                   _ -> TwoPair p1 p2 (clearLast2 bv')
+              in TwoPair p1 p2 (clearLeastTo 1 bv')
 
             (PTrips t) ->
               let bv' = bv `clearBit` _rank t
-              in Trips t (clearLast2 bv')
+              in Trips t (clearLeastTo 2 bv')
 
             (PFullHouse t p) -> FullHouse t p
 
             (PQuads q) ->
               let bv' = bv `clearBit` _rank q
-              in case popCount bv' of
-                   1 -> Quads q bv'
-                   2 -> Quads q (clearLast1 bv')
-                   _ -> Quads q (clearLast2 bv')
+              in Quads q (clearLeastTo 1 bv')
 
 
 analyze :: (MonadState PokerState m)
