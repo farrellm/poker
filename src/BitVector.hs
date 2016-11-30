@@ -1,68 +1,99 @@
-{-# LANGUAGE DataKinds, TypeFamilies, TypeOperators,
-    GeneralizedNewtypeDeriving, StandaloneDeriving,
-    MultiParamTypeClasses, FlexibleInstances,
-    ScopedTypeVariables, FlexibleContexts,
-    UndecidableInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DataKinds, TypeFamilies, TypeOperators, FlexibleInstances,
+    MultiParamTypeClasses, ScopedTypeVariables, FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, StandaloneDeriving #-}
 
-module BitVector where
+module BitVector
+  (BitVector, Elem, empty, (!), reshape, fromList, toList)
+  where
 
 import Data.Bits
 import Data.Char (intToDigit)
 import Data.List (foldl', intercalate)
+import qualified Data.Text.Format as F
 import Data.Word
 import Data.Proxy
 import GHC.TypeLits
 import Numeric (showIntAtBase)
 import Unsafe.Coerce
 
-type family BVElem (b::Nat) :: * where
-  BVElem 1 = Word8
-  BVElem 2 = Word8
-  BVElem 4 = Word8
-  BVElem 8 = Word8
-  BVElem 16 = Word16
-  BVElem 32 = Word32
-  BVElem 64 = Word64
+type family Elem (b :: Nat) :: * where
+        Elem 1 = Word8
+        Elem 2 = Word8
+        Elem 4 = Word8
+        Elem 8 = Word8
+        Elem 16 = Word16
+        Elem 32 = Word32
+        Elem 64 = Word64
 
-newtype BitVector b n = BitVector { bitVec :: BVElem (b*n) }
+newtype BitVector b n = BitVector { bitVec :: Elem (b*n) }
 
--- deriving instance Show (BVElem (b*n)) => Show (BitVector b n)
-deriving instance Eq (BVElem (b*n)) => Eq (BitVector b n)
-deriving instance Ord (BVElem (b*n)) => Ord (BitVector b n)
-deriving instance Bits (BVElem (b*n)) => Bits (BitVector b n)
-deriving instance FiniteBits (BVElem (b*n)) => FiniteBits (BitVector b n)
-deriving instance Enum (BVElem (b*n)) => Enum (BitVector b n)
-deriving instance Real (BVElem (b*n)) => Real (BitVector b n)
-deriving instance Integral (BVElem (b*n)) => Integral (BitVector b n)
-deriving instance Num (BVElem (b*n)) => Num (BitVector b n)
+deriving instance Eq (BitVector 8 1)
+deriving instance Ord (BitVector 8 1)
+deriving instance Bits (BitVector 8 1)
+deriving instance FiniteBits (BitVector 8 1)
+deriving instance Enum (BitVector 8 1)
+deriving instance Real (BitVector 8 1)
+deriving instance Integral (BitVector 8 1)
+deriving instance Num (BitVector 8 1)
 
-instance forall b n . (BV b n) => Show (BitVector b n) where
+deriving instance Eq (BitVector 16 1)
+deriving instance Ord (BitVector 16 1)
+deriving instance Bits (BitVector 16 1)
+deriving instance FiniteBits (BitVector 16 1)
+deriving instance Enum (BitVector 16 1)
+deriving instance Real (BitVector 16 1)
+deriving instance Integral (BitVector 16 1)
+deriving instance Num (BitVector 16 1)
+
+deriving instance Eq (BitVector 32 1)
+deriving instance Ord (BitVector 32 1)
+deriving instance Bits (BitVector 32 1)
+deriving instance FiniteBits (BitVector 32 1)
+deriving instance Enum (BitVector 32 1)
+deriving instance Real (BitVector 32 1)
+deriving instance Integral (BitVector 32 1)
+deriving instance Num (BitVector 32 1)
+
+deriving instance Eq (BitVector 64 1)
+deriving instance Ord (BitVector 64 1)
+deriving instance Bits (BitVector 64 1)
+deriving instance FiniteBits (BitVector 64 1)
+deriving instance Enum (BitVector 64 1)
+deriving instance Real (BitVector 64 1)
+deriving instance Integral (BitVector 64 1)
+deriving instance Num (BitVector 64 1)
+
+instance (BV b n, Integral (Elem b), Show (Elem b)) =>
+         Show (BitVector b n) where
   show v =
-    let w = 2
-        b = fromIntegral $ natVal (Proxy :: Proxy b)
-        n = fromIntegral $ natVal (Proxy :: Proxy n)
-        t = showIntAtBase w intToDigit v ""
-        bitsPerDigit = logBase 2 $ fromIntegral w
-        a = round (fromIntegral b / bitsPerDigit)
-        nMissing = round (fromIntegral b * n / bitsPerDigit) - length t
-        h = replicate nMissing '0'
-        s = h ++ t
-    in "BitVector " ++ (intercalate "," $ splitAll a s)
-    where splitAll _ [] = []
-          splitAll a ls = let (l, s) = splitAt a ls
-                          in l : splitAll a s
+    let b = fromIntegral $ natVal (Proxy :: Proxy b)
+        vs = map (\i -> showIntAtBase 2 intToDigit i "") .
+             reverse $ toList v
+        ws = map (padLeft b) vs
+    in "BitVector " ++ (intercalate "," ws)
+    where padLeft n s = replicate (n - length s) '0' ++ s
 
-class (KnownNat b, KnownNat n, KnownNat (b*n),
-       Num (BVElem b), Integral (BVElem b),
-       Integral (BVElem (b*n)), Bits (BVElem (b*n))) =>
-      BV (b::Nat) (n::Nat) where
+empty :: forall b n . (Bits (BitVector (b*n) 1)) => BitVector b n
+empty = reshape (zeroBits :: BitVector (b*n) 1)
+{-# INLINE empty #-}
 
-  empty :: BitVector b n
-  empty = zeroBits
+class (KnownNat b, KnownNat n,
+       Bits (Elem (b*n)), Integral (Elem (b*n)), Num (Elem b)) =>
+      BV b n  where
+  (!) :: BitVector b n -> Int -> Elem b
+  (!) = indexRaw
+  {-# INLINE (!) #-}
 
-  (!) :: BitVector b n -> Int -> BVElem b
-  v ! i = let s = fromInteger $ natVal (Proxy :: Proxy b)
-          in fromIntegral (v `shift` (-s * i))
+  indexRaw :: BitVector b n -> Int -> Elem b
+  indexRaw v i =
+    let b = fromInteger $ natVal (Proxy :: Proxy b)
+        (BitVector bits) = reshape v :: BitVector (b*n) 1
+    in fromIntegral (bits `shift` (-b * i))
+  {-# INLINE indexRaw #-}
+
+{-# SPECIALIZE (!) :: BitVector 16 4 -> Int -> Elem 16 #-}
+{-# SPECIALIZE indexRaw :: BitVector 16 4 -> Int -> Elem 16 #-}
 
 
 instance BV 8 1
@@ -79,51 +110,46 @@ instance BV 32 2
 instance BV 16 4
 instance BV 8 8
 
--- mask1 :: Word8
--- mask1 = 0x1
-
--- instance (KnownNat n, KnownNat (1*n),
---           Integral (BVElem (1*n)), Bits (BVElem (1*n))) =>
---          BV 1 n where
---   (BitVector a) ! i = mask1 .&. fromIntegral (a `shift` (-1 * i))
-
--- mask2 :: Word8
--- mask2 = 0x3
-
--- instance (KnownNat n, KnownNat (2*n),
---           Integral (BVElem (2*n)), Bits (BVElem (2*n))) =>
---          BV 2 n where
---   (BitVector a) ! i = mask2 .&. fromIntegral (a `shift` (-2 * i))
-
 mask4 :: Word8
 mask4 = 0xF
 
+instance BV 4 2 where
+  v ! i = mask4 .&. (v `indexRaw` i)
+
 instance BV 4 4 where
-  (BitVector a) ! i =
-    mask4 .&. fromIntegral (a `shift` (-4 * i))
+  v ! i = mask4 .&. (v `indexRaw` i)
+
+instance BV 4 8 where
+  v ! i = mask4 .&. (v `indexRaw` i)
 
 instance BV 4 16 where
-  (BitVector a) ! i =
-    mask4 .&. fromIntegral (a `shift` (-4 * i))
+  v ! i = mask4 .&. (v `indexRaw` i)
 
 
 reshape :: ((a * b) ~ (c * d))
         => BitVector a b -> BitVector c d
 reshape = unsafeCoerce
+{-# INLINE reshape #-}
 
 toList :: forall b n . BV b n
-       => BitVector b n -> [BVElem b]
+       => BitVector b n -> [Elem b]
 toList v =
-    let s = fromInteger $ natVal (Proxy :: Proxy n)
-    in map (v !) [0..(s - 1)]
+    let n = fromInteger $ natVal (Proxy :: Proxy n)
+    in map (v !) [0..(n - 1)]
+{-# SPECIALIZE toList :: BitVector 16 4 -> [Elem 16] #-}
 
-fromList :: forall b n . BV b n
-         => [BVElem b] -> BitVector b n
+fromList :: forall b n.
+            (BV b n, Integral (Elem b)
+            ,Num (BitVector (b*n) 1), Bits (BitVector (b*n) 1))
+         => [Elem b] -> BitVector b n
 fromList es =
-  let s = fromInteger $ natVal (Proxy :: Proxy b)
-      f = (\v e -> (v `shift` s) .|. fromIntegral e)
-      bv = foldl' f zeroBits es
-  in reshape (bv :: BitVector (b*n) 1)
+  let b = fromInteger $ natVal (Proxy :: Proxy b)
+      f = (\v e -> (v `shift` b) .|. fromIntegral e)
+      bv = foldl' f (zeroBits :: BitVector (b*n) 1) es
+  in reshape bv
+{-# SPECIALIZE fromList :: [Elem 16] -> BitVector 16 4 #-}
+{-# SPECIALIZE fromList :: [Elem 4] -> BitVector 4 16 #-}
 
-fromElem :: BVElem b -> BitVector b 1
+fromElem :: Elem b -> BitVector b 1
 fromElem e = BitVector e
+{-# INLINE fromElem #-}

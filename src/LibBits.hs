@@ -1,9 +1,9 @@
 {-# LANGUAGE NoImplicitPrelude, OverloadedStrings #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving, FlexibleContexts, ScopedTypeVariables #-}
-{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DataKinds, TypeFamilies #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module LibBits where
+module LibBits  where
 
 import BasicPrelude
 
@@ -16,8 +16,6 @@ import qualified Data.Vector.Unboxed as V
 import Lens.Micro.Platform
 import System.Random.MWC
 import System.Random.MWC.Distributions
-
--- import Debug.Trace
 
 import qualified BitVector as BV
 
@@ -62,14 +60,14 @@ suitMajorIndex :: Card -> Int
 suitMajorIndex (r, s) = s * 16 + r
 
 data Result
-  = HighCard (BV.BitVector 16 1)
-  | Pair Rank (BV.BitVector 16 1)
-  | TwoPair Rank Rank (BV.BitVector 16 1)
-  | Trips Rank (BV.BitVector 16 1)
+  = HighCard (BV.Elem 16)
+  | Pair Rank (BV.Elem 16)
+  | TwoPair Rank Rank (BV.Elem 16)
+  | Trips Rank (BV.Elem 16)
   | Straight Int
-  | Flush (BV.BitVector 16 1)
+  | Flush (BV.Elem 16)
   | FullHouse Rank Rank
-  | Quads Rank (BV.BitVector 16 1)
+  | Quads Rank (BV.Elem 16)
   | StraightFlush Int
   deriving (Show,Eq,Ord)
 
@@ -132,9 +130,11 @@ rankHand cs =
       flush = isFlush suitMajor
 
       rankFlags = orSuits suitMajor
-      stRankFlags = case flush of
-                      Just (Suit s) -> suitMajor BV.! s
-                      Nothing -> rankFlags
+      stRankFlags =
+        case flush of
+          Just (Suit s) ->
+            (BV.reshape suitMajor :: BV.BitVector 16 4) BV.! s
+          Nothing -> rankFlags
 
       straight = isStraight stRankFlags
 
@@ -149,31 +149,31 @@ rankHand cs =
     (Just _, Just straightNum, _, _, _) ->
       StraightFlush straightNum
     (_, _, Just q, _, _) ->
-      Quads (Rank q) . BV.fromElem $
+      Quads (Rank q) $
       clearLeastTo 1 (clearBit rankFlags q)
     (_, _, _, Just t, p:_) ->
       FullHouse (Rank t) (Rank p)
     (Just _, _, _, _, _) ->
-      Flush . BV.fromElem $ clearLeastTo 5 stRankFlags
+      Flush (clearLeastTo 5 stRankFlags)
     (_, Just straightNum, _, _, _) ->
       Straight straightNum
     (_, _, _, Just t, _) ->
-      Trips (Rank t) . BV.fromElem $
-      clearLeastTo 2 (clearBit rankFlags t)
+      Trips (Rank t) (clearLeastTo 2 (clearBit rankFlags t))
     (_, _, _, _, p1:p2:_) ->
-      TwoPair (Rank p1) (Rank p2) . BV.fromElem $
+      TwoPair (Rank p1) (Rank p2)  $
       clearLeastTo 1 (clearBit (clearBit rankFlags p2) p1)
     (_, _, _, _, [p]) ->
-      Pair (Rank p) . BV.fromElem $
-      clearLeastTo 3 (clearBit rankFlags p)
+      Pair (Rank p) (clearLeastTo 3 (clearBit rankFlags p))
     _ ->
-      HighCard . BV.fromElem $ clearLeastTo 5 rankFlags
+      HighCard (clearLeastTo 5 rankFlags)
 
   where isFlush suitMajor =
-          let suitMask = BV.fromList (replicate 4 1)
-              goS s i = ((suitMajor .&. (suitMask `shift` i))
-                         `shift` (-i)) + s
-              ss = BV.toList (foldl' goS zeroBits [0..13])
+          let suitMask :: BV.BitVector 64 1 =
+                BV.reshape $
+                (BV.fromList (replicate 4 1) :: BV.BitVector 16 4)
+              goS i = (suitMajor .&. (suitMask `shift` i)) `shift` (-i)
+              sv = sum $ map goS [0..13]
+              ss = BV.toList (BV.reshape sv :: BV.BitVector 16 4)
 
               (flCount, flSuit) = maximum (zip ss $ map Suit [0..])
           in if flCount >= 5
@@ -181,24 +181,25 @@ rankHand cs =
              else Nothing
 
         mkSuitMajor cs =
-          V.foldl' (\v c -> setBit v $ suitMajorIndex c)
-                   zeroBits
-                   cs :: BV.BitVector 16 4
+          let go v i = v `setBit` suitMajorIndex (cs V.! i)
+          in foldl' go (zeroBits :: BV.BitVector 64 1) [0..6]
 
         mkRankMajor cs =
-          V.foldl' (\v c -> setBit v $ rankMajorIndex c)
-                   zeroBits
-                   cs :: BV.BitVector 4 16
+          let go v i = v `setBit` rankMajorIndex (cs V.! i)
+          in foldl' go (zeroBits :: BV.BitVector 64 1) [0..6]
 
         orSuits v =
-          ((v `shift` (-16 * _suit club)) .|.
-           (v `shift` (-16 * _suit diamond)) .|.
-           (v `shift` (-16 * _suit heart)) .|.
-           (v `shift` (-16 * _suit spade))
-          ) BV.! 0
+          (BV.reshape $
+           ((v `shift` (-16 * _suit club)) .|.
+            (v `shift` (-16 * _suit diamond)) .|.
+            (v `shift` (-16 * _suit heart)) .|.
+            (v `shift` (-16 * _suit spade))
+           ) :: BV.BitVector 16 4) BV.! 0
 
         sumRanks rankMajor =
-          let rankMask = BV.fromList (replicate 16 1)
+          let rankMask =
+                BV.reshape $
+                (BV.fromList (replicate 16 1) :: BV.BitVector 4 16)
               go s i = ((rankMajor .&. (rankMask `shift` i))
                        `shift` (-i)) + s
           in foldl' go zeroBits [0..3]
@@ -215,8 +216,9 @@ rankHand cs =
              else Just (- countLeadingZeros rs)
 
         isQuads rc =
-          let quadMask =
-                BV.fromList (replicate 16 4) :: BV.BitVector 4 16
+          let quadMask :: BV.BitVector 64 1 =
+                BV.reshape
+                (BV.fromList (replicate 16 4) :: BV.BitVector 4 16)
               q = rc .&. quadMask
               s = (64 - countLeadingZeros q) `div` 4
           in if q == zeroBits
@@ -224,8 +226,9 @@ rankHand cs =
              else Just s
 
         isTrips rc =
-          let tripMask =
-                BV.fromList (replicate 16 1) :: BV.BitVector 4 16
+          let tripMask :: BV.BitVector 64 1 =
+                BV.reshape $
+                (BV.fromList (replicate 16 1) :: BV.BitVector 4 16)
               q = (rc `shift` (-1)) .&. rc .&. tripMask
               s = (64 - countLeadingZeros q) `div` 4
           in if q == zeroBits
@@ -233,8 +236,9 @@ rankHand cs =
              else Just s
 
         isPairs rc =
-          let pairMask =
-                BV.fromList (replicate 16 2) :: BV.BitVector 4 16
+          let pairMask :: BV.BitVector 64 1 =
+                BV.reshape $
+                (BV.fromList (replicate 16 2) :: BV.BitVector 4 16)
               q = complement (rc `shift` 1) .&. rc .&. pairMask
               l = countLeadingZeros q
               b = 64 - l - 1
@@ -246,6 +250,7 @@ rankHand cs =
                   then [s]
                   else [s, t]
 
+        clearLeast :: BV.Elem 16 -> BV.Elem 16
         clearLeast bv = bv `clearBit` countTrailingZeros bv
         clearLeastTo n bv =
           case popCount bv - n of
@@ -253,8 +258,8 @@ rankHand cs =
             1 -> clearLeast bv
             2 -> clearLeast $ clearLeast bv
             m | m > 0 -> clearLeastTo (n - 1) (clearLeast bv)
-            m -> error ("cannot clear least to " ++
-                        show n ++ " from bitset with " ++ show m)
+            _ -> error ("cannot clear least to " ++
+                        show n ++ " from bitset with " ++ show (popCount bv))
 
 
 analyze :: (MonadState PokerState m)
